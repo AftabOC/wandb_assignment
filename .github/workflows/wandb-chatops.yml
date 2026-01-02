@@ -1,0 +1,93 @@
+name: W&B ChatOps
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  wandb-comparison:
+    runs-on: ubuntu-latest
+    if: github.event.issue.pull_request && contains(github.event.comment.body, '/wandb')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install wandb requests
+      
+      - name: Extract run ID from comment
+        id: extract_run_id
+        run: |
+          COMMENT="${{ github.event.comment.body }}"
+          RUN_ID=$(echo "$COMMENT" | grep -oP '/wandb\s+\K\S+' || echo "")
+          if [ -z "$RUN_ID" ]; then
+            echo "error=No run ID found in comment" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+          echo "Extracted run ID: $RUN_ID"
+      
+      - name: Run W&B comparison script
+        id: wandb_comparison
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+          WANDB_ENTITY: ${{ secrets.WANDB_ENTITY }}
+          WANDB_PROJECT: ${{ secrets.WANDB_PROJECT }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ steps.extract_run_id.outputs.run_id }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          python wandb_comparison.py
+        continue-on-error: true
+      
+      - name: Read report URL
+        id: report_url
+        if: steps.wandb_comparison.outcome == 'success'
+        run: |
+          if [ -f report_url.txt ]; then
+            REPORT_URL=$(cat report_url.txt)
+            echo "report_url=$REPORT_URL" >> $GITHUB_OUTPUT
+            echo "Report URL: $REPORT_URL"
+          else
+            echo "Error: report_url.txt not found"
+            exit 1
+          fi
+      
+      - name: Comment on PR
+        if: steps.wandb_comparison.outcome == 'success'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const reportUrl = '${{ steps.report_url.outputs.report_url }}';
+            const runId = '${{ steps.extract_run_id.outputs.run_id }}';
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## W&B Comparison Report\n\n✅ Successfully compared run \`${runId}\` with baseline.\n\n📊 [View Comparison Report](${reportUrl})`
+            });
+      
+      - name: Comment on PR (error)
+        if: steps.wandb_comparison.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const runId = '${{ steps.extract_run_id.outputs.run_id }}';
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## W&B Comparison Error\n\n❌ Failed to create comparison report for run \`${runId}\`.\n\nPlease check:\n- The run ID is correct\n- The run exists in your W&B project\n- A baseline run is tagged with "baseline" in your project`
+            });
+
