@@ -78,10 +78,3 @@ To test the workflow:
 3. Comment `/wandb <valid-run-id>` on the PR
 4. Check the Actions tab to see the workflow execution
 5. The PR should receive a comment with the comparison URL
-
-## Assignment Submission
-
-Submit the link to your GitHub Actions workflow:
-```
-https://github.com/AftabOC/wandb_assignment/actions/workflows/wandb-chatops.yml
-```
